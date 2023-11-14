@@ -287,6 +287,9 @@ defmodule Argo.Server do
           |> Map.put(:last_known_leader, self())
           |> Map.put(:next_index, next_append_indices)
           |> Map.put(:match_index, match_indices)
+          |> Map.update!(:log, fn log -> [{last_log_index + 1, state.current_term, nil} | log] end)
+        # ^ add a no-op log entry to force sync of committed entries
+        # See O&O Section 8
 
         send_heartbeat(state, empty?: true)
 
