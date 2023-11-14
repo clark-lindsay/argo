@@ -65,7 +65,7 @@ defmodule Argo.Client do
   def handle_continue(
         %{
           options: options,
-      timeout: timeout,
+          timeout: timeout,
           from: from,
           command: command,
           request_serial_number: request_serial_number
@@ -136,7 +136,12 @@ defmodule Argo.Client do
 
   @impl GenServer
   def handle_continue(
-        %{options: options, timeout: timeout, from: from, request_serial_number: request_serial_number},
+        %{
+          options: options,
+          timeout: timeout,
+          from: from,
+          request_serial_number: request_serial_number
+        },
         state
       ) do
     # request has been made to the cluster, which had a leader when the call was made,

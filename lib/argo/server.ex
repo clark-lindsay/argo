@@ -115,6 +115,7 @@ defmodule Argo.Server do
     catch
       :exit, value ->
         {:error, value}
+
       thrown_value ->
         {:error, thrown_value}
     end
@@ -149,17 +150,20 @@ defmodule Argo.Server do
       )
       when behavior != :leader do
     if not is_nil(state.last_known_leader) do
-    reply = try do
-      GenServer.call(state.last_known_leader, msg)
-    rescue
-      error ->
-        {:error, error}
-    catch
-      :exit, value ->
-        {:error, value}
-      thrown_value ->
-        {:error, thrown_value}
-    end
+      reply =
+        try do
+          GenServer.call(state.last_known_leader, msg)
+        rescue
+          error ->
+            {:error, error}
+        catch
+          :exit, value ->
+            {:error, value}
+
+          thrown_value ->
+            {:error, thrown_value}
+        end
+
       {:reply, reply, state}
     else
       {:reply, {:error, :unknown_leader}, state}
@@ -197,8 +201,6 @@ defmodule Argo.Server do
         |> Map.put(:voted_for, self())
         |> Map.put(:votes, %{(state.current_term + 1) => [self()]})
         |> refresh_election_timout()
-
-      IO.puts("Server #{inspect(self())} is starting an election for term #{state.current_term}")
 
       {last_log_index, last_log_term, _val} = hd(state.log)
 
@@ -267,8 +269,6 @@ defmodule Argo.Server do
 
     state =
       if(my_vote_count >= majority_for_cluster) do
-        IO.inspect("Server #{inspect(self())} has won the election for term #{reply.term}")
-
         {last_log_index, _last_log_term, _val} = hd(state.log)
 
         next_append_indices =
@@ -299,7 +299,7 @@ defmodule Argo.Server do
   end
 
   @impl GenServer
-  def handle_info( %AppendEntriesReply{term: reply_term}, %{behavior: behavior} = state)
+  def handle_info(%AppendEntriesReply{term: reply_term}, %{behavior: behavior} = state)
       when behavior != :leader do
     state =
       state
@@ -346,7 +346,6 @@ defmodule Argo.Server do
       end)
       |> then(&put_in(&1, [:match_index, sender], get_in(&1, [:next_index, sender]) - 1))
 
-
     # could perform the below as part of a scheduled cleanup, instead of on every successful reply,
     # since it requires calling out to the registry for every log acc
     servers =
@@ -365,7 +364,7 @@ defmodule Argo.Server do
       for {{index, _term} = key, callback} <- state.client_callbacks,
           reduce: {state.commit_index, %{}} do
         {commit_index, remaining_callbacks} ->
-          if replicants_by_index[index] + 1 >= majority_for_cluster do
+          if Map.get(replicants_by_index, index, 0) + 1 >= majority_for_cluster do
             callback.()
 
             {max(index, commit_index), remaining_callbacks}
@@ -540,10 +539,6 @@ defmodule Argo.Server do
         |> refresh_election_timout()
         |> Map.put(:voted_for, request.candidate_id)
 
-      IO.puts(
-        "Server #{inspect(self())} is voting for #{inspect(request.candidate_id)} for term #{request.term}"
-      )
-
       send(
         request.candidate_id,
         %RequestVoteReply{sender: self(), term: state.current_term, vote_granted: true}
@@ -569,10 +564,6 @@ defmodule Argo.Server do
         state
         |> Map.put(:voted_for, request.candidate_id)
         |> refresh_election_timout()
-
-      IO.puts(
-        "Server #{inspect(self())} is voting for #{inspect(request.candidate_id)} for term #{request.term}"
-      )
 
       send(
         request.candidate_id,

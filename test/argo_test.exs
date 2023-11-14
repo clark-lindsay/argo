@@ -2,7 +2,6 @@ defmodule ArgoTest do
   use ExUnit.Case
   use ExUnitProperties
 
-  @tag timeout: 120_000
   property "cluster still serves requests while a majority of nodes are alive" do
     check all(
             cluster_size <- StreamData.member_of(3..15//2),
@@ -18,7 +17,7 @@ defmodule ArgoTest do
       }
 
       # start unsupervised servers to fill cluster
-      for server <- 1..cluster_size do
+      for _server <- 1..cluster_size do
         GenServer.start(
           Argo.Server,
           cluster_size: cluster_config.cluster_size,
