@@ -40,7 +40,17 @@ defmodule ArgoTest do
         Process.exit(pid, :kill)
       end)
 
-      assert :ok == Argo.Client.add_command(client, :test)
+      assert :ok == Argo.Client.add_command(client, :test_2)
+
+      {:ok, log} = Argo.Client.read_log(client)
+
+      log_vals_except_noops =
+        log
+        |> Enum.filter(fn {_index, val} -> val != :no_op end)
+        |> Enum.map(fn {_index, val} -> val end)
+
+      assert :test in log_vals_except_noops
+      assert :test_2 in log_vals_except_noops
     end
   end
 end

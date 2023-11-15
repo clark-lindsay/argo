@@ -34,9 +34,21 @@ defmodule Argo.Client do
     GenServer.call(client, {:add_command, command, options})
   end
 
+  @spec read_log(client :: pid(), options :: [timeout: integer(), retry_interval: integer()]) ::
+          {:ok, [term()]} | {:error, term()}
+  def read_log(client, options \\ []) do
+    options =
+      options
+      |> Keyword.put_new(:timeout, 2_000)
+      |> Keyword.put_new(:retry_interval, 200)
+
+    GenServer.call(client, {:read_log, options})
+  end
+
   # ----- Callback API
 
   # TODO(design, implementation): cap maximum retry amount?
+  # ^ it's already implicitly capped by the ratio of `:timeout` and `:retry_interval`
   @impl GenServer
   def handle_call({:add_command, command, options}, from, state) do
     # TODO(implementation, design): do i need to store this in the client's state?
@@ -46,7 +58,26 @@ defmodule Argo.Client do
     {:noreply, state,
      {:continue,
       %{
-        command: command,
+        action: fn server_pid ->
+          Argo.Server.add_command(server_pid, {command, request_serial_number})
+        end,
+        from: from,
+        request_serial_number: request_serial_number,
+        options: options,
+        timeout: options[:timeout]
+      }}}
+  end
+
+  @impl GenServer
+  def handle_call({:read_log, options}, from, state) do
+    # TODO(implementation, design): do i need to store this in the client's state?
+    # if so, how should i store it?
+    request_serial_number = System.unique_integer([:positive, :monotonic])
+
+    {:noreply, state,
+     {:continue,
+      %{
+        action: fn server_pid -> Argo.Server.read_log(server_pid, request_serial_number) end,
         from: from,
         request_serial_number: request_serial_number,
         options: options,
@@ -67,7 +98,7 @@ defmodule Argo.Client do
           options: options,
           timeout: timeout,
           from: from,
-          command: command,
+          action: action,
           request_serial_number: request_serial_number
         },
         state
@@ -85,13 +116,17 @@ defmodule Argo.Client do
         do: state.last_known_leader,
         else: Enum.random(server_pids)
 
-    with {:ok, leader} <-
-           Argo.Server.add_command(random_server, {command, request_serial_number}) do
+    with {:ok, leader} <- action.(random_server) do
       state = Map.put(state, :last_known_leader, leader)
 
       receive do
         {:add_command_success, ^request_serial_number} ->
           GenServer.reply(from, :ok)
+
+          {:noreply, state}
+
+        {:read_log_success, ^request_serial_number, log} when is_list(log) ->
+          GenServer.reply(from, {:ok, log})
 
           {:noreply, state}
       after
@@ -108,13 +143,10 @@ defmodule Argo.Client do
               from: from,
               request_serial_number: request_serial_number
             }}}
-
-          # only fails if the cluster could not find a leader, so we must wait for an election to resolve
-
-          # TODO(design): using `Process.sleep/1` always feels wrong... but in this case, is it right?
       end
     else
       _ ->
+        # only fails if the cluster could not find a leader, so we must wait for an election to resolve
         elapsed_time_for_attempt_in_ms = elapsed_time(start_time, System.monotonic_time())
 
         retry_delay = max(0, options[:retry_interval] - elapsed_time_for_attempt_in_ms)
@@ -128,7 +160,7 @@ defmodule Argo.Client do
             options: options,
             timeout: new_timeout,
             from: from,
-            command: command,
+            action: action,
             request_serial_number: request_serial_number
           }}}
     end
@@ -151,6 +183,11 @@ defmodule Argo.Client do
     receive do
       {:add_command_success, ^request_serial_number} ->
         GenServer.reply(from, :ok)
+
+        {:noreply, state}
+
+      {:read_log_success, ^request_serial_number, log} when is_list(log) ->
+        GenServer.reply(from, {:ok, log})
 
         {:noreply, state}
     after

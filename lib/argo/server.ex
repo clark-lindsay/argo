@@ -22,10 +22,6 @@ defmodule Argo.Server do
 
   # TODO(test): "if a server receives a request with a stale term number, it rejects the request" (5.1)
 
-  # TODO(implementation): client API for adding entries to the leader's log, which will then be replicated to the cluster with "AppendEntries" rounds
-  # ^ requests that hit a follower should be redirected to leader? or should they simply reply with the leader's address?
-  # TODO(implementation): remove periodic "AppendEntries" heartbeats (should the periodic timer be reset if the leader has sent out real entries?)
-
   defmodule RequestVote do
     @moduledoc false
     defstruct([:term, :candidate_id, :last_log_index, :last_log_term])
@@ -70,7 +66,7 @@ defmodule Argo.Server do
         current_term: 0,
         voted_for: nil,
         # {index, term, value}
-        log: [{0, 0, nil}],
+        log: [{0, 0, :no_op}],
         commit_index: 0,
         last_applied: 0,
         # ----- Leader state
@@ -100,13 +96,6 @@ defmodule Argo.Server do
   # ----- Client API -----
   # See O&O Section 8
 
-  # TODO(implementation & design): should be async, b/c the leader can only respond
-  # when the entry has been replicated to a majority of the cluster
-  # ^ would be easier to test, since i could do `assert_receive`
-  # TODO(consider, implementation): should i add a timeout/ deadline for the response?
-  # use a call so that the client knows that it reached the cluster, and gets
-  # info about the last known leader
-  # then the callback is triggered when the command is replicated to a majority of the cluster
   def add_command(server_pid, {command, request_serial_number}, _callback \\ fn -> :ok end) do
     GenServer.call(server_pid, {:add_command, command, request_serial_number, self()})
   rescue
@@ -120,7 +109,50 @@ defmodule Argo.Server do
       {:error, thrown_value}
   end
 
+  def read_log(server_pid, request_serial_number, _callback \\ fn -> :ok end) do
+    GenServer.call(server_pid, {:read_log, request_serial_number, self()})
+  rescue
+    error ->
+      {:error, error}
+  catch
+    :exit, value ->
+      {:error, value}
+
+    thrown_value ->
+      {:error, thrown_value}
+  end
+
   # ----- Callback API -----
+
+  @impl GenServer
+  def handle_call(
+        {:read_log, request_serial_number, client_pid},
+        _from,
+        %{behavior: :leader} = state
+      ) do
+    # per O&O Section 8 we have to exchange heartbeats with a majority of the cluster
+    # before replying to a read request
+    # So we store the callback for now, linked to the log index that it's related to,
+    # and we will reply when a majority of followers have replied to a heartbeat and
+    # are guaranteed to have replicated the log up to that index number
+    reply_callback = fn ->
+      send(
+        client_pid,
+        {:read_log_success, request_serial_number,
+         Enum.map(state.log, fn {index, _term, value} -> {index, value} end)}
+      )
+    end
+
+    {last_index, _, _} = hd(state.log)
+
+    state =
+      update_in(state, [:client_callbacks, {last_index, state.current_term}], fn
+        nil -> [reply_callback]
+        callbacks -> [reply_callback | callbacks]
+      end)
+
+    {:reply, {:ok, self()}, state}
+  end
 
   @impl GenServer
   def handle_call(
@@ -253,8 +285,6 @@ defmodule Argo.Server do
         %{behavior: :candidate, current_term: current_term} = state
       )
       when reply_term == current_term do
-    # TODO(design): use cond instead of nested ifs?
-    # not sure, since i would have to do the vote counting bit twice
     state =
       Map.update(
         state,
@@ -289,7 +319,9 @@ defmodule Argo.Server do
           |> Map.put(:last_known_leader, self())
           |> Map.put(:next_index, next_append_indices)
           |> Map.put(:match_index, match_indices)
-          |> Map.update!(:log, fn log -> [{last_log_index + 1, state.current_term, nil} | log] end)
+          |> Map.update!(:log, fn log ->
+            [{last_log_index + 1, state.current_term, :no_op} | log]
+          end)
 
         # ^ add a no-op log entry to force sync of committed entries
         # See O&O Section 8
@@ -361,8 +393,6 @@ defmodule Argo.Server do
 
     majority_for_cluster = Integer.floor_div(state.cluster_config[:cluster_size], 2) + 1
 
-    # TODO(implementation): can i use this same logic to execute client callbacks related
-    # to read requests?
     replicants_by_index =
       state.match_index
       |> Enum.filter(fn {server_id, _index} -> server_id in servers end)
