@@ -10,8 +10,9 @@ defmodule Argo.Server do
   ## follower
   ## listener
   """
-  require Integer
   use GenServer
+
+  require Integer
 
   # TODO(implementation): "servers retry RPCS if they do not receive a response in a timely manner" (5.1)
   # ^ i think i would only want to retry RPCs under certain conditions... e.g. if i was trying to send an "AppendEntries" call
@@ -107,18 +108,16 @@ defmodule Argo.Server do
   # info about the last known leader
   # then the callback is triggered when the command is replicated to a majority of the cluster
   def add_command(server_pid, {command, request_serial_number}, _callback \\ fn -> :ok end) do
-    try do
-      GenServer.call(server_pid, {:add_command, command, request_serial_number, self()})
-    rescue
-      error ->
-        {:error, error}
-    catch
-      :exit, value ->
-        {:error, value}
+    GenServer.call(server_pid, {:add_command, command, request_serial_number, self()})
+  rescue
+    error ->
+      {:error, error}
+  catch
+    :exit, value ->
+      {:error, value}
 
-      thrown_value ->
-        {:error, thrown_value}
-    end
+    thrown_value ->
+      {:error, thrown_value}
   end
 
   # ----- Callback API -----
@@ -137,7 +136,10 @@ defmodule Argo.Server do
     state =
       state
       |> Map.update!(:log, fn log -> [{new_index, state.current_term, command} | log] end)
-      |> put_in([:client_callbacks, {new_index, state.current_term}], reply_callback)
+      |> update_in([:client_callbacks, {new_index, state.current_term}], fn
+        nil -> [reply_callback]
+        callbacks -> [reply_callback | callbacks]
+      end)
 
     {:reply, {:ok, self()}, state}
   end
@@ -288,6 +290,7 @@ defmodule Argo.Server do
           |> Map.put(:next_index, next_append_indices)
           |> Map.put(:match_index, match_indices)
           |> Map.update!(:log, fn log -> [{last_log_index + 1, state.current_term, nil} | log] end)
+
         # ^ add a no-op log entry to force sync of committed entries
         # See O&O Section 8
 
@@ -366,23 +369,24 @@ defmodule Argo.Server do
       |> Enum.frequencies_by(fn {_server_id, index} -> index end)
 
     {highest_commitable_index, remaining_callbacks} =
-      for {{index, _term} = key, callback} <- state.client_callbacks,
+      for {{index, _term} = key, callbacks} <- state.client_callbacks,
           reduce: {state.commit_index, %{}} do
         {commit_index, remaining_callbacks} ->
-          replicants_for_index = Enum.reduce(replicants_by_index, 1, fn {replicated_index, server_count}, total ->
-            if replicated_index >= index do
-              total + server_count
-            else
-              total
-            end
-          end)
+          replicants_for_index =
+            Enum.reduce(replicants_by_index, 1, fn {replicated_index, server_count}, total ->
+              if replicated_index >= index do
+                total + server_count
+              else
+                total
+              end
+            end)
 
           if replicants_for_index >= majority_for_cluster do
-            callback.()
+            Enum.each(callbacks, &apply(&1, []))
 
             {max(index, commit_index), remaining_callbacks}
           else
-            {commit_index, Map.put(remaining_callbacks, key, callback)}
+            {commit_index, Map.put(remaining_callbacks, key, callbacks)}
           end
       end
 
