@@ -1,5 +1,5 @@
 defmodule ArgoTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
   use ExUnitProperties
 
   property "cluster still serves requests while a majority of nodes are alive" do
@@ -17,13 +17,22 @@ defmodule ArgoTest do
       }
 
       # start unsupervised servers to fill cluster
-      for _server <- 1..cluster_size do
-        GenServer.start(
-          Argo.Server,
-          cluster_size: cluster_config.cluster_size,
-          registry: cluster_config.registry
-        )
-      end
+      servers =
+        for _server <- 1..cluster_size do
+          {:ok, pid} =
+            GenServer.start(
+              Argo.Server,
+              cluster_size: cluster_config.cluster_size,
+              registry: cluster_config.registry
+            )
+
+          pid
+        end
+
+      # ensure that all unlinked servers are cleaned up after test completes
+      on_exit(fn ->
+        Enum.each(servers, &Process.exit(&1, :kill))
+      end)
 
       client =
         start_supervised!({Argo.Client, registry: cluster_config.registry},
