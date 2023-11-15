@@ -358,6 +358,8 @@ defmodule Argo.Server do
 
     majority_for_cluster = Integer.floor_div(state.cluster_config[:cluster_size], 2) + 1
 
+    # TODO(implementation): can i use this same logic to execute client callbacks related
+    # to read requests?
     replicants_by_index =
       state.match_index
       |> Enum.filter(fn {server_id, _index} -> server_id in servers end)
@@ -367,7 +369,15 @@ defmodule Argo.Server do
       for {{index, _term} = key, callback} <- state.client_callbacks,
           reduce: {state.commit_index, %{}} do
         {commit_index, remaining_callbacks} ->
-          if Map.get(replicants_by_index, index, 0) + 1 >= majority_for_cluster do
+          replicants_for_index = Enum.reduce(replicants_by_index, 1, fn {replicated_index, server_count}, total ->
+            if replicated_index >= index do
+              total + server_count
+            else
+              total
+            end
+          end)
+
+          if replicants_for_index >= majority_for_cluster do
             callback.()
 
             {max(index, commit_index), remaining_callbacks}
