@@ -1,21 +1,20 @@
 # Argo
 
-**TODO: Add description**
+An implementation of the [Raft distributed consensus algorithm](https://raft.github.io/) for fun and learning.
 
-## Installation
+## Disclaimer
 
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `argo` to your list of dependencies in `mix.exs`:
+First things first: this implementation should not be used for anything except the aforementioned goals of "fun and learning".
 
-```elixir
-def deps do
-  [
-    {:argo, "~> 0.1.0"}
-  ]
-end
-```
+I wrote this because I was first intrigued by the protocol, and then enamored by actually being able to understand it after reading [the paper](https://raft.github.io/raft.pdf), which was different from my experience with [Paxos](https://en.wikipedia.org/wiki/Paxos_(computer_science)) where I was first intrigued, and then bewildered (the ["made simple" paper](https://lamport.azurewebsites.net/pubs/paxos-simple.pdf) is still a good read, though).
 
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/argo>.
+## Corners that I cut
+
+Non-exhaustive list of things that I cut out because they either didn't seem valuable given the goals of "fun and learning" or I just haven't gotten around to it:
+
+- servers writing their log to non-volatile storage
+- each server running a state machine, fed with events from the log
+   - will likely be implemented with [gen_statem](https://www.erlang.org/doc/man/gen_statem)
+- distribution across nodes
+   - i.e. i am using a registry for cluster membership, instead of a distributed solution like [pg](https://www.erlang.org/doc/man/pg.html)
 
