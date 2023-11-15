@@ -2,6 +2,8 @@
 
 An implementation of the [Raft distributed consensus algorithm](https://raft.github.io/) for fun and learning.
 
+Why "Argo"? Because a raft is a sort of boat, and I can't imagine a better "raft" for escaping from the island of [Paxos](https://en.wikipedia.org/wiki/Paxos_(computer_science)) than [the Argo](https://en.wikipedia.org/wiki/Argo).
+
 ## Disclaimer
 
 First things first: this implementation should not be used for anything except the aforementioned goals of "fun and learning".
